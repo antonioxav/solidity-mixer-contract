@@ -31,9 +31,10 @@ contract Mixer {
         uint256 initBlock;
         uint256 depositDeadline;
         uint256 requestDeadline;
+        
         address[] depositors;
         address[] claimants;
-        // TODO: Track Intermediary for bonus question
+        address[] intermediaries;
 
         mapping(bytes32 => MaskedCDDetails) maskedCDDetails;
         mapping(bytes32 => ClaimedCDDetails) claimedCDDetails; // has CD been claimed
@@ -104,9 +105,10 @@ contract Mixer {
         if (!cycle.bankerCheated) {
             for (uint16 d = 0; d < cycle.depositors.length; d++) {
                 accountDetails[cycle.depositors[d]].balance -= 1 ether;
-                if (d < cycle.claimants.length)
-                    accountDetails[cycle.claimants[d]].balance += 1 ether;
-                // TODO: Pay intermediaries a part of claimant money
+                if (d < cycle.claimants.length) {
+                    accountDetails[cycle.claimants[d]].balance += 1 ether - claimFee;
+                    accountDetails[cycle.intermediaries[d]].balance += claimFee;
+                }
             }
         }
 
@@ -146,7 +148,11 @@ contract Mixer {
         accountDetails[msg.sender].locked_balance += msg.value;
     }
 
-    function deregisterBanker(address banker) public bankersOnly {
+    function deregisterBanker() external bankersOnly {
+        address banker = msg.sender;
+        require(accountDetails[banker].role == Role.Banker, "You are not a banker");
+        require(cycle.banker!=banker, "current banker cannot deregister");
+
         uint256 bankerID = accountDetails[banker].bankerID;
         
         // remove banker from bankers
@@ -315,6 +321,7 @@ contract Mixer {
         else revert("This signedCD has already been claimed");
 
         cycle.claimants.push(claimant);
+        cycle.intermediaries.push(msg.sender);
 
         if (cycle.claimants.length > cycle.depositors.length) bankerCheated();
     }
@@ -339,7 +346,13 @@ contract Mixer {
                 delete cycle.maskedCDDetails[accountDetails[payee].lastMaskedCD];
         }
 
-        // TODO: Pay Intermediary (balance, not actual transfer). check if payee can afford fees
+        // Pay Intermediary (balance, not actual transfer). check if payee can afford fees
+        if (payee!=msg.sender) {
+            require(accountDetails[payee].balance > transferFee);
+            accountDetails[payee].balance -= transferFee;
+            accountDetails[msg.sender].balance += transferFee;
+        }
+
 
         uint amount = accountDetails[payee].balance;
         accountDetails[payee].balance = 0;
