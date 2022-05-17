@@ -16,12 +16,18 @@ contract Mixer {
         Signed
     }
 
+    struct RSAPublicKey {
+        uint128 e; // public exponent
+        uint128 n; // modulus
+    }
+
     struct AccountDetails {
         Role role;
         uint256 locked_balance; // TODO: remove and only use deposit
         uint256 balance;
         uint256 bankerID; // index in bankers array. Only bankers have this
-        bytes32 lastMaskedCD; // last maskedCD deposited by this account
+        RSAPublicKey bankerPK;
+        uint128 lastMaskedCD; // last maskedCD deposited by this account
         // ? uint lastRequestCycle
     }
 
@@ -31,20 +37,20 @@ contract Mixer {
         uint256 initBlock;
         uint256 depositDeadline;
         uint256 requestDeadline;
-        
+
         address[] depositors;
         address[] claimants;
         address[] intermediaries;
 
-        mapping(bytes32 => MaskedCDDetails) maskedCDDetails;
-        mapping(bytes32 => ClaimedCDDetails) claimedCDDetails; // has CD been claimed
+        mapping(uint128 => MaskedCDDetails) maskedCDDetails;
+        mapping(uint128 => ClaimedCDDetails) claimedCDDetails; // has CD been claimed
     }
 
     struct MaskedCDDetails {
         MaskedCDStatus status;
         uint256 cycleEnd; // * Cycle End blocks are used as unique identifiers for each cycle
         address depositor; 
-        bytes32 signed;
+        uint128 signed;
     }
 
     struct ClaimedCDDetails {
@@ -85,8 +91,8 @@ contract Mixer {
 
     event blacklistEvent(address cheater);
 
-    constructor() payable {
-        registerBanker();
+    constructor(RSAPublicKey memory bankerPK) payable {
+        registerBanker(bankerPK);
         resetCycle();
     }
 
@@ -136,15 +142,21 @@ contract Mixer {
         );
     }
 
-    function registerBanker() public payable {
+    function getBankerPK() public view returns (RSAPublicKey memory){
+        return accountDetails[cycle.banker].bankerPK;
+    }
+
+    function registerBanker(RSAPublicKey memory pk) public payable {
         require(
             accountDetails[msg.sender].role == Role.Participant,
             "You are either already a banker or you are blacklisted"
         );
         require(msg.value >= bankerDeposit);
+        
         accountDetails[msg.sender].bankerID = bankers.length;
         bankers.push(msg.sender);
         accountDetails[msg.sender].role = Role.Banker;
+        accountDetails[msg.sender].bankerPK = pk;
         accountDetails[msg.sender].locked_balance += msg.value;
     }
 
@@ -167,6 +179,8 @@ contract Mixer {
         // return deposit
         accountDetails[banker].balance += accountDetails[banker].locked_balance;
         accountDetails[banker].locked_balance = 0;
+
+        delete accountDetails[banker].bankerPK;
     }
 
     function blacklist(address cheater) private {
@@ -185,14 +199,14 @@ contract Mixer {
     }
 
     function verifySignature(
-        bytes32 message,
-        bytes32 sign,
-        address pk
-    ) internal pure returns (bool) {
-        return true;
+        uint128 message, // sha256 hashed message
+        uint128 sign, // message**d % n
+        RSAPublicKey memory pk
+    ) public pure returns (bool) { // TODO: change to internal later?
+        return true; // TODO: Implement Function
     }
 
-    function depositEther(bytes32 maskedCD) external payable allParticipants {
+    function depositEther(uint128 maskedCD) external payable allParticipants {
         if (block.number > cycle.requestDeadline) resetCycle();
         else
             require(
@@ -210,7 +224,7 @@ contract Mixer {
                 MaskedCDStatus.Unsigned,
                 cycle.requestDeadline,
                 msg.sender,
-                bytes32(0)
+                0
             );
         else
             revert(
@@ -237,7 +251,7 @@ contract Mixer {
         // balance[msg.sender] = 1.1 ether;
     }
 
-    function signMaskedCD(bytes32 maskedCD, bytes32 sign) external bankersOnly {
+    function signMaskedCD(uint128 maskedCD, uint128 sign) external bankersOnly {
         if (block.number > cycle.requestDeadline) resetCycle();
         else
             require(
@@ -256,7 +270,7 @@ contract Mixer {
             "Invalid Unsigned MaskedCD"
         );
 
-        require(verifySignature(maskedCD, sign, msg.sender));
+        require(verifySignature(maskedCD, sign, accountDetails[msg.sender].bankerPK));
 
         require(
             cycle.depositors.length <= maxDeposits,
@@ -290,7 +304,7 @@ contract Mixer {
     }
 
     function requestWithdrawal(
-        bytes32 signedCD,
+        uint128 signedCD,
         bytes32 nonce,
         address claimant
     ) external allParticipants {
@@ -305,11 +319,13 @@ contract Mixer {
 
         require(cycle.claimants.length <= cycle.depositors.length); // TODO: remove if redundant
 
+        RSAPublicKey memory bankerPK = accountDetails[cycle.banker].bankerPK;
+        uint128 CD = uint128(uint256(sha256(abi.encodePacked(nonce, claimant))) % uint256(bankerPK.n));
         require(
             verifySignature(
-                sha256(abi.encodePacked(nonce, claimant)),
+                CD,
                 signedCD,
-                cycle.banker
+                bankerPK
             )
         );
 
