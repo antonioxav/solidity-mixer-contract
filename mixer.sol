@@ -199,11 +199,23 @@ contract Mixer {
     }
 
     function verifySignature(
-        uint128 message, // sha256 hashed message
+        uint128 message, // sha256 hashed message % n
         uint128 sign, // message**d % n
         RSAPublicKey memory pk
     ) public pure returns (bool) { // TODO: change to internal later?
-        return true; // TODO: Implement Function
+        
+        uint n = uint(pk.n);
+        uint exp = uint(pk.e);
+        uint base = uint(sign) % n;
+        uint unsignedMessage = 1;
+
+        while (exp > 0){
+            if ((exp & 1) > 0) unsignedMessage = (unsignedMessage * base) % n;
+            exp >>= 1;
+            base = (base**2) % n;
+        }
+
+        return (unsignedMessage == uint(message));
     }
 
     function depositEther(uint128 maskedCD) external payable allParticipants {
@@ -219,6 +231,7 @@ contract Mixer {
             "Please submit at least 1.1 ether"
         );
 
+        // If same maskedCD has not been used this cycle, then initialize it, else revert
         if (cycle.maskedCDDetails[maskedCD].cycleEnd != cycle.requestDeadline)
             cycle.maskedCDDetails[maskedCD] = MaskedCDDetails(
                 MaskedCDStatus.Unsigned,
@@ -236,19 +249,8 @@ contract Mixer {
         //     "A maskedCD with the same value has already been submitted in this cycle"
         // );
 
-        // cycle.maskedCDDetails[maskedCD].status == MaskedCDStatus.Unsigned;
-        // cycle.maskedCDDetails[maskedCD].depositor == msg.sender;
-
         accountDetails[msg.sender].balance += 1 ether + signingFee; // * refundable until signed
         accountDetails[msg.sender].lastMaskedCD = maskedCD;
-
-        // // If same maskedCD has not been used this cycle, then initialize it, else revert
-        // // ? Do I need to delete old value when re-initializing?
-
-        // maskedCDStatus[maskedCD] = MaskedCDStatus.Unsigned;
-        // maskedCDDepositor[maskedCD] = msg.sender;
-        // maskedCDBanker[maskedCD] = currentBanker;
-        // balance[msg.sender] = 1.1 ether;
     }
 
     function signMaskedCD(uint128 maskedCD, uint128 sign) external bankersOnly {
