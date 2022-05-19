@@ -66,6 +66,7 @@ contract Mixer {
     address[] public bankers;
     mapping(address => AccountDetails) accountDetails;
     Cycle cycle;
+    uint public timeBlock = 1;
     // mapping (bytes32 => MaskedCDDetails) maskedCDDetails;
     // mapping (bytes32 => address) maskedCDBanker;
 
@@ -106,7 +107,15 @@ contract Mixer {
         _;
     }
 
+    // ! For testing only
+    function advanceTime() public{
+        uint256 half_day = (12 * 60 * 60) / uint256(13);
+        timeBlock += half_day;
+    }
+
     function resetCycle() private {
+        require(bankers.length>0, "Awaiting bankers");
+
         // distribute last cycle's deposits
         if (!cycle.bankerCheated) {
             for (uint16 d = 0; d < cycle.depositors.length; d++) {
@@ -124,7 +133,7 @@ contract Mixer {
         delete cycle.claimants;
 
         // new deadlines
-        cycle.initBlock = block.number;
+        cycle.initBlock = timeBlock;
         uint256 day = (24 * 60 * 60) / uint256(13);
         cycle.depositDeadline = cycle.initBlock + day;
         cycle.requestDeadline = cycle.depositDeadline + day;
@@ -219,10 +228,10 @@ contract Mixer {
     }
 
     function depositEther(uint128 maskedCD) external payable allParticipants {
-        if (block.number > cycle.requestDeadline) resetCycle();
+        if (timeBlock > cycle.requestDeadline) resetCycle();
         else
             require(
-                block.number <= cycle.depositDeadline,
+                timeBlock <= cycle.depositDeadline,
                 "Not in the deposit phase. Please try during next cycle."
             );
 
@@ -254,10 +263,10 @@ contract Mixer {
     }
 
     function signMaskedCD(uint128 maskedCD, uint128 sign) external bankersOnly {
-        if (block.number > cycle.requestDeadline) resetCycle();
+        if (timeBlock > cycle.requestDeadline) resetCycle();
         else
             require(
-                block.number <= cycle.depositDeadline,
+                timeBlock <= cycle.depositDeadline,
                 "Not in the deposit phase."
             );
 
@@ -272,7 +281,7 @@ contract Mixer {
             "Invalid Unsigned MaskedCD"
         );
 
-        require(verifySignature(maskedCD, sign, accountDetails[msg.sender].bankerPK));
+        require(verifySignature(maskedCD, sign, accountDetails[msg.sender].bankerPK), "Signature mismatch");
 
         require(
             cycle.depositors.length <= maxDeposits,
@@ -280,6 +289,7 @@ contract Mixer {
         );
 
         cycle.maskedCDDetails[maskedCD].signed = sign;
+        cycle.maskedCDDetails[maskedCD].status = MaskedCDStatus.Signed;
         address depositor = cycle.maskedCDDetails[maskedCD].depositor;
         cycle.depositors.push(depositor);
 
@@ -294,7 +304,7 @@ contract Mixer {
 
         // distribute all of the banker's money.
         uint256 compensation = (accountDetails[cycle.banker].locked_balance +
-            accountDetails[cycle.banker].locked_balance) /
+            accountDetails[cycle.banker].balance) /
             cycle.depositors.length;
         for (uint16 d = 0; d < cycle.depositors.length; d++)
             accountDetails[cycle.depositors[d]].balance += compensation;
@@ -307,22 +317,22 @@ contract Mixer {
 
     function requestWithdrawal(
         uint128 signedCD,
-        bytes32 nonce,
+        uint nonce,
         address claimant
     ) external allParticipants {
         require(
-            block.number <= cycle.requestDeadline,
+            timeBlock <= cycle.requestDeadline,
             "Deadline to request withdrawal has passed."
         );
         require(
-            block.number > cycle.depositDeadline,
+            timeBlock > cycle.depositDeadline,
             "Still in the deposit phase"
         );
 
         require(cycle.claimants.length <= cycle.depositors.length); // TODO: remove if redundant
 
         RSAPublicKey memory bankerPK = accountDetails[cycle.banker].bankerPK;
-        uint128 CD = uint128(uint256(sha256(abi.encodePacked(nonce, claimant))) % uint256(bankerPK.n));
+        uint128 CD = uint128(uint256(sha256(abi.encodePacked(nonce, claimant)))) % bankerPK.n;
         require(
             verifySignature(
                 CD,
