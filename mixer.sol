@@ -107,6 +107,8 @@ contract Mixer {
     }
 
     function resetCycle() private {
+        require(bankers.length>0, "Awaiting bankers");
+
         // distribute last cycle's deposits
         if (!cycle.bankerCheated) {
             for (uint16 d = 0; d < cycle.depositors.length; d++) {
@@ -118,8 +120,6 @@ contract Mixer {
             }
         }
 
-        // ? delete old cycle's contents and make new one?
-        // cycle = Cycle();
         delete cycle.depositors;
         delete cycle.claimants;
 
@@ -272,7 +272,7 @@ contract Mixer {
             "Invalid Unsigned MaskedCD"
         );
 
-        require(verifySignature(maskedCD, sign, accountDetails[msg.sender].bankerPK));
+        require(verifySignature(maskedCD, sign, accountDetails[msg.sender].bankerPK), "Signature mismatch");
 
         require(
             cycle.depositors.length <= maxDeposits,
@@ -280,6 +280,7 @@ contract Mixer {
         );
 
         cycle.maskedCDDetails[maskedCD].signed = sign;
+        cycle.maskedCDDetails[maskedCD].status = MaskedCDStatus.Signed;
         address depositor = cycle.maskedCDDetails[maskedCD].depositor;
         cycle.depositors.push(depositor);
 
@@ -294,7 +295,7 @@ contract Mixer {
 
         // distribute all of the banker's money.
         uint256 compensation = (accountDetails[cycle.banker].locked_balance +
-            accountDetails[cycle.banker].locked_balance) /
+            accountDetails[cycle.banker].balance) /
             cycle.depositors.length;
         for (uint16 d = 0; d < cycle.depositors.length; d++)
             accountDetails[cycle.depositors[d]].balance += compensation;
@@ -307,7 +308,7 @@ contract Mixer {
 
     function requestWithdrawal(
         uint128 signedCD,
-        bytes32 nonce,
+        uint nonce,
         address claimant
     ) external allParticipants {
         require(
@@ -322,13 +323,14 @@ contract Mixer {
         require(cycle.claimants.length <= cycle.depositors.length); // TODO: remove if redundant
 
         RSAPublicKey memory bankerPK = accountDetails[cycle.banker].bankerPK;
-        uint128 CD = uint128(uint256(sha256(abi.encodePacked(nonce, claimant))) % uint256(bankerPK.n));
+        uint128 CD = uint128(uint256(sha256(abi.encodePacked(nonce, claimant)))) % bankerPK.n;
         require(
             verifySignature(
                 CD,
                 signedCD,
                 bankerPK
-            )
+            ),
+            "Signature mismatch"
         );
 
         if (cycle.claimedCDDetails[signedCD].cycleEnd != cycle.requestDeadline)
