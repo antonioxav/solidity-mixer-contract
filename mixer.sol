@@ -66,6 +66,7 @@ contract Mixer {
     address[] public bankers;
     mapping(address => AccountDetails) accountDetails;
     Cycle cycle;
+    uint public timeBlock = 1;
     // mapping (bytes32 => MaskedCDDetails) maskedCDDetails;
     // mapping (bytes32 => address) maskedCDBanker;
 
@@ -106,6 +107,12 @@ contract Mixer {
         _;
     }
 
+    // ! For testing only
+    function advanceTime() public{
+        uint256 half_day = (12 * 60 * 60) / uint256(13);
+        timeBlock += half_day;
+    }
+
     function resetCycle() private {
         require(bankers.length>0, "Awaiting bankers");
 
@@ -124,7 +131,7 @@ contract Mixer {
         delete cycle.claimants;
 
         // new deadlines
-        cycle.initBlock = block.number;
+        cycle.initBlock = timeBlock;
         uint256 day = (24 * 60 * 60) / uint256(13);
         cycle.depositDeadline = cycle.initBlock + day;
         cycle.requestDeadline = cycle.depositDeadline + day;
@@ -219,10 +226,10 @@ contract Mixer {
     }
 
     function depositEther(uint128 maskedCD) external payable allParticipants {
-        if (block.number > cycle.requestDeadline) resetCycle();
+        if (timeBlock > cycle.requestDeadline) resetCycle();
         else
             require(
-                block.number <= cycle.depositDeadline,
+                timeBlock <= cycle.depositDeadline,
                 "Not in the deposit phase. Please try during next cycle."
             );
 
@@ -254,10 +261,10 @@ contract Mixer {
     }
 
     function signMaskedCD(uint128 maskedCD, uint128 sign) external bankersOnly {
-        if (block.number > cycle.requestDeadline) resetCycle();
+        if (timeBlock > cycle.requestDeadline) resetCycle();
         else
             require(
-                block.number <= cycle.depositDeadline,
+                timeBlock <= cycle.depositDeadline,
                 "Not in the deposit phase."
             );
 
@@ -312,11 +319,11 @@ contract Mixer {
         address claimant
     ) external allParticipants {
         require(
-            block.number <= cycle.requestDeadline,
+            timeBlock <= cycle.requestDeadline,
             "Deadline to request withdrawal has passed."
         );
         require(
-            block.number > cycle.depositDeadline,
+            timeBlock > cycle.depositDeadline,
             "Still in the deposit phase"
         );
 
